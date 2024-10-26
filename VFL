@@ -1,3 +1,17 @@
+# python
+import cv2
+import numpy as np
+from matplotlib import pyplot as plt
+import matplotlib.patheffects as path_effects
+from skimage.feature import corner_harris, corner_subpix, corner_peaks
+from skimage import measure
+from scipy.spatial import distance
+import scipy.ndimage as ndi
+import matlab.engine
+import pandas as pd
+import math
+import networkx as nx
+
 number = 83
 distance_threshold = 25 
 slope_threshold = 1 
