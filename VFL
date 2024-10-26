@@ -1,0 +1,153 @@
+number = 83
+distance_threshold = 25 
+slope_threshold = 1 
+text = "The Beauty Studio"
+
+image_path = r"imagedata\data{}.png".format(number)
+image = cv2.imread(image_path)
+mask_path = r"imagedata\mask{}.png".format(number)
+mask = cv2.imread(mask_path)
+
+gray_mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+_, binary_mask = cv2.threshold(gray_mask, 127, 255, cv2.THRESH_BINARY)
+cropped_image = cv2.bitwise_and(image, image, mask=binary_mask)
+crop_image_path = r"process\building{}.png".format(number)
+cv2.imwrite(crop_image_path, cropped_image, [cv2.IMWRITE_PNG_COMPRESSION, 0])
+
+coords = corner_peaks(corner_harris(gray_mask), min_distance=10, threshold_rel=0.3)
+coords_subpix = corner_subpix(gray_mask, coords, window_size=15)
+
+coords_list = list(coords_subpix) 
+nan_rows = [i for i, row in enumerate(coords_list) if any(np.isnan(row))]
+coords_list = [row for i, row in enumerate(coords_list) if i not in nan_rows]
+
+contours = measure.find_contours(binary_mask, 0.5)
+contours = measure.find_contours(binary_mask, 0.5)
+
+def flatten_list(lst): 
+    flattened = [item for sublist in lst for item in sublist]
+    return flattened
+flattened_polygon = flatten_list(contours)
+
+def find_nearest_point(point, polygon):
+    distances = [distance.euclidean(point.ravel(), vertex.ravel()) for vertex in polygon]  
+    nearest_index = np.argmin(distances) 
+    return polygon[nearest_index]
+nearest_points = []
+for point in coords_list:
+    nearest_point = find_nearest_point(point, flattened_polygon)
+    nearest_points.append(nearest_point)
+nearest_points = np.array(nearest_points)
+
+indices = []
+for point in nearest_points:
+    closest_index = np.argmin(np.linalg.norm(flattened_polygon - point, axis=1))
+    indices.append(closest_index)
+indices = np.array(indices)
+sorted_nearest_points = nearest_points[np.argsort(indices)]
+
+def calculate_distance(point1, point2):
+    return np.linalg.norm(np.array(point2) - np.array(point1))
+lines = []
+line_length = []
+for i in range(len(sorted_nearest_points)):
+    start = sorted_nearest_points[i]
+    end = sorted_nearest_points[(i + 1) % len(sorted_nearest_points)]  
+    length = calculate_distance(start, end)
+    line_length.append(length)
+    lines.append((start, end))
+
+max_length_index = np.argmax(line_length) 
+max_length = line_length[max_length_index] 
+max_length_line = lines[max_length_index]  
+
+start_point = max_length_line[0]
+end_point = max_length_line[1]
+md_slope = (end_point[0] - start_point[0]) / (end_point[1] - start_point[1])
+
+eng = matlab.engine.start_matlab()
+result = eng.matlab_kmeans(number) 
+output_filepath = result[0]  
+labelMatrix = result[1]  
+kmeans = cv2.imread(output_filepath)
+eng.quit()
+
+kmeans_gray = cv2.cvtColor(kmeans, cv2.COLOR_BGR2GRAY)
+kernel = np.ones((3, 3), np.uint8)
+erosion = cv2.erode(kmeans_gray, kernel, iterations=10)
+skeleton = cv2.ximgproc.thinning(erosion)
+
+skeleton_label = measure.label(skeleton)
+skeleton_props = measure.regionprops(skeleton_label) 
+for prop in skeleton_props:
+    pixel_count = prop.area
+    print("Region:", prop.area,"length:", pixel_count)
+largest_region = max(skeleton_props, key=lambda region: region.area) 
+lskeleton = np.zeros_like(skeleton) 
+lskeleton[skeleton_label == largest_region.label] = 255 
+labelMatrix = np.array(labelMatrix)
+labelMatrix = labelMatrix.astype(np.int32)  
+
+skeleton_df = pd.DataFrame(lskeleton, columns=None)
+skeleton_df.to_csv(r'exceloutput\skeleton{}.csv'.format(number), index=False)
+label_df = pd.DataFrame(labelMatrix, columns=None)
+label_df.to_csv(r'exceloutput\labelMatrix{}.csv'.format(number), index=False)
+
+
+labels = []
+skeleton_coords = np.transpose(np.nonzero(lskeleton)) 
+for point in skeleton_coords:
+    x, y = point
+    label = labelMatrix[x, y]
+    labels.append(label)
+labels = np.unique(labels)
+
+zero_matrix = np.zeros((labelMatrix.shape[0], labelMatrix.shape[1]), dtype=int)
+for label in labels:
+    indices = np.where(labelMatrix == label)
+    zero_matrix[indices] = label
+zero_df = pd.DataFrame(zero_matrix, columns=None)
+zero_df.to_csv(r'exceloutput\splabel{}.csv'.format(number), index=False)
+relabel = measure.label(zero_matrix) 
+relabel_df = pd.DataFrame(relabel, columns=None)
+relabel_df.to_csv(r'exceloutput\relabel{}.csv'.format(number), index=False)
+
+props = measure.regionprops(relabel)
+relabel_centroids = []
+for prop in props:
+    relabel_centroids.append(prop.centroid)
+# print(type(relabel_centroids))
+
+num_centroids = len(relabel_centroids)
+adjacency_matrix = np.zeros((num_centroids+1, num_centroids+1), dtype=int)
+
+for i in range(num_centroids): 
+    centroid = relabel_centroids[i]
+    x, y = centroid
+    label = relabel[int(x), int(y)]  
+
+    for mx in range(relabel.shape[0]):
+        for my in range(relabel.shape[1]):
+            if relabel[mx, my] == label and (mx, my) != (int(x), int(y)):
+                for dx in [-1, 0, 1]: 
+                    for dy in [-1, 0, 1]:
+                        if dx == 0 and dy == 0:
+                            continue
+                        ex, ey = mx + dx, my + dy
+                        if 0 <= ex < relabel.shape[0] and 0 <= ey < relabel.shape[1]:
+                            neighbor_label = relabel[ex, ey]
+                            if neighbor_label != label:
+                                adjacency_matrix[i, neighbor_label] = 1
+
+adjacency_matrix1 = adjacency_matrix[:-1, 1:]
+admatrix_df1 = pd.DataFrame(adjacency_matrix1,columns=None)
+admatrix_df1.to_csv(r'exceloutput\adjacency_matrix{}.csv'.format(number), index=False)
+G = nx.Graph()
+for i in range(adjacency_matrix1.shape[0]):
+    for j in range(adjacency_matrix1.shape[1]):
+        if adjacency_matrix1[i, j] == 1:
+            centroid1 = relabel_centroids[i]
+            centroid2 = relabel_centroids[j]
+            distance = math.sqrt((centroid2[0] - centroid1[0])**2 + (centroid2[1] - centroid1[1])**2)
+            G.add_edge(i, j, weight=distance)
+glabels = {i: str(i+1) for i in range(num_centroids)} 
