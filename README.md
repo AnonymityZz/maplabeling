@@ -7,4 +7,4 @@ Dataset 1: WHU Building Dataset
 
 4. sd.py: instructructions to reproduce Figure 11, Figure 12(b) and the third column of Tabel 2.
 
-5. tc.py: instructructions to reproduce Figure 12(c) and the forth column of Tabel 2.
+5. tc.py: instructructions to reproduce Figure 12(c) and the fourth column of Tabel 2.
